@@ -10,6 +10,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"reflect"
+
+	"github.com/pkg/errors"
 )
 
 // XSINamespace is a link to the XML Schema instance namespace.
@@ -117,7 +119,7 @@ func doRoundTrip(ctx context.Context, c *Client, setHeaders func(*http.Request),
 	var b bytes.Buffer
 	err := xml.NewEncoder(&b).Encode(req)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "encode xml")
 	}
 	cli := c.Config
 	if cli == nil {
@@ -125,7 +127,7 @@ func doRoundTrip(ctx context.Context, c *Client, setHeaders func(*http.Request),
 	}
 	r, err := http.NewRequest("POST", c.URL, &b)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "create request")
 	}
 	setHeaders(r)
 	if c.Pre != nil {
@@ -133,7 +135,7 @@ func doRoundTrip(ctx context.Context, c *Client, setHeaders func(*http.Request),
 	}
 	resp, err := cli.Do(r)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "do request")
 	}
 	defer resp.Body.Close()
 	if c.Post != nil {
@@ -154,8 +156,11 @@ func doRoundTrip(ctx context.Context, c *Client, setHeaders func(*http.Request),
 		XMLName xml.Name `xml:"Envelope"`
 		Body    Message
 	}{Body: out}
-
-	return xml.NewDecoder(resp.Body).Decode(&marshalStructure)
+	err = xml.NewDecoder(resp.Body).Decode(&marshalStructure)
+	if err != nil {
+		return errors.WithMessage(err, "decode xml")
+	}
+	return nil
 }
 
 // RoundTrip implements the RoundTripper interface.
