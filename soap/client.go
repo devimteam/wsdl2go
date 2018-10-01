@@ -3,6 +3,7 @@ package soap
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -42,18 +43,18 @@ type AuthHeader struct {
 
 // Client is a SOAP client.
 type Client struct {
-	URL                    string               // URL of the server
-	UserAgent              string               // User-Agent header will be added to each request
-	Namespace              string               // SOAP Namespace
-	URNamespace            string               // Uniform Resource Namespace
-	ThisNamespace          string               // SOAP This-Namespace (tns)
-	ExcludeActionNamespace bool                 // Include Namespace to SOAP Action header
-	Envelope               string               // Optional SOAP Envelope
-	Header                 Header               // Optional SOAP Header
-	ContentType            string               // Optional Content-Type (default text/xml)
-	Config                 *http.Client         // Optional HTTP client
-	Pre                    func(*http.Request)  // Optional hook to modify outbound requests
-	Post                   func(*http.Response) // Optional hook to snoop inbound responses
+	URL                    string                                // URL of the server
+	UserAgent              string                                // User-Agent header will be added to each request
+	Namespace              string                                // SOAP Namespace
+	URNamespace            string                                // Uniform Resource Namespace
+	ThisNamespace          string                                // SOAP This-Namespace (tns)
+	ExcludeActionNamespace bool                                  // Include Namespace to SOAP Action header
+	Envelope               string                                // Optional SOAP Envelope
+	Header                 Header                                // Optional SOAP Header
+	ContentType            string                                // Optional Content-Type (default text/xml)
+	Config                 *http.Client                          // Optional HTTP client
+	Pre                    func(context.Context, *http.Request)  // Optional hook to modify outbound requests
+	Post                   func(context.Context, *http.Response) // Optional hook to snoop inbound responses
 }
 
 // XMLTyper is an abstract interface for types that can set an XML type.
@@ -92,7 +93,7 @@ func setXMLType(v reflect.Value) {
 	}
 }
 
-func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) error {
+func doRoundTrip(ctx context.Context, c *Client, setHeaders func(*http.Request), in, out Message) error {
 	setXMLType(reflect.ValueOf(in))
 	req := &Envelope{
 		EnvelopeAttr: c.Envelope,
@@ -128,7 +129,7 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 	}
 	setHeaders(r)
 	if c.Pre != nil {
-		c.Pre(r)
+		c.Pre(ctx, r)
 	}
 	resp, err := cli.Do(r)
 	if err != nil {
@@ -136,7 +137,7 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 	}
 	defer resp.Body.Close()
 	if c.Post != nil {
-		c.Post(resp)
+		c.Post(ctx, resp)
 	}
 	if resp.StatusCode != http.StatusOK {
 		// read only the first MiB of the body in error case
@@ -181,12 +182,16 @@ func (c *Client) RoundTrip(in, out Message) error {
 			r.Header.Add("SOAPAction", actionName)
 		}
 	}
-	return doRoundTrip(c, headerFunc, in, out)
+	return doRoundTrip(context.Background(), c, headerFunc, in, out)
 }
 
 // RoundTripWithAction implements the RoundTripper interface for SOAP clients
 // that need to set the SOAPAction header.
 func (c *Client) RoundTripWithAction(soapAction string, in, out Message) error {
+	return c.RoundTripWithActionContext(context.Background(), soapAction, in, out)
+}
+
+func (c *Client) RoundTripWithActionContext(ctx context.Context, soapAction string, in, out Message) error {
 	headerFunc := func(r *http.Request) {
 		if c.UserAgent != "" {
 			r.Header.Add("User-Agent", c.UserAgent)
@@ -205,8 +210,9 @@ func (c *Client) RoundTripWithAction(soapAction string, in, out Message) error {
 			}
 			r.Header.Add("SOAPAction", actionName)
 		}
+		r = r.WithContext(ctx)
 	}
-	return doRoundTrip(c, headerFunc, in, out)
+	return doRoundTrip(ctx, c, headerFunc, in, out)
 }
 
 // RoundTripSoap12 implements the RoundTripper interface for SOAP 1.2.
@@ -214,7 +220,7 @@ func (c *Client) RoundTripSoap12(action string, in, out Message) error {
 	headerFunc := func(r *http.Request) {
 		r.Header.Add("Content-Type", fmt.Sprintf("application/soap+xml; charset=utf-8; action=\"%s\"", action))
 	}
-	return doRoundTrip(c, headerFunc, in, out)
+	return doRoundTrip(context.Background(), c, headerFunc, in, out)
 }
 
 // HTTPError is detailed soap http error
